@@ -97,6 +97,15 @@ class PgNode_s(PgNode):
         self.__hash = self.__hash or hash(self.symbol) ^ hash(self.is_pos)
         return self.__hash
 
+    def link_parent(self, parent):
+        """
+        Adds parent to self.parents and self to parent.children
+
+        param: parent, PgNode_a
+        """
+        self.parents.add(parent)
+        parent.children.add(self)
+
 
 class PgNode_a(PgNode):
     """A-type (action) Planning Graph node - inherited from PgNode """
@@ -179,23 +188,23 @@ class PgNode_a(PgNode):
         return self.__hash
 
     def add_parents(self, state_nodes):
-        for s_node in state_nodes:
-            self.parents.add(s_node)
-
-    def update_prenodes(self, state_nodes):
-        """ Switch prenodes of self so that it links to actual nodes in the graph,
-        instead of to new ones
-
-        param state_nodes: actual nodes in previous state level
-        return: switch nodes in self.prenodes
         """
-        for s_node in self.prenodes:
-            for actual_node in state_nodes:
-                if actual_node == s_node:
-                    self.prenodes.remove(s_node)
-                    self.prenodes.add(actual_node)
+        Adds state nodes that are its parent to .parents attribute
 
+        param : state_nodes, s_level nodes
+        """
+        for s_node in state_nodes:
+            if s_node in self.prenodes:
+                self.parents.add(s_node)
 
+    def link_parent(self, parent):
+        """
+        Add parent to to action.parents and action to parent.children
+
+        param : PgNode_s, onde of action's parents.
+        """
+        self.parents.add(parent)
+        parent.children.add(self)
 
 
 def mutexify(node1: PgNode, node2: PgNode):
@@ -327,13 +336,14 @@ class PlanningGraph():
         #   action node is added, it MUST be connected to the S node instances in the appropriate s_level set.
 
         # TODO
+
         # instantiaing a set at level
         self.a_levels.append(set())
 
         """
         WHAT ACTIONS TO ADD?
         There are two approaches to to that: checking if actions precondition fluents are 
-        in the state and then creating an action, or chreating a PgNode_a for everu action
+        in the state and then creating an action, or creating a PgNode_a for every action
         and check is its prenodes are a subset of the state level.
         The first one would be more complicated to do, since it would require to manually
         implement a function that goes thorugh fluents in preconditions and compare to fluents
@@ -341,23 +351,17 @@ class PlanningGraph():
         easier
         """
 
+
         for action in self.all_actions:
-            a_node = PgNode_a(action) # when an action node is created, prenodes are constructed
-            # a_node prenodes and self.s_levels are both sets, assuming they are hashable:
+            a_node = PgNode_a(action) 
+            # assuming PgNode_s nodes are hashable, we can check if subset
             if a_node.prenodes.issubset(self.s_levels[level]):
-                # when the action was created, its constructor created new PgNode_s nodes as 
-                # parents, so it is not connected to the nodes in the graph
-                a_node.add_parents(self.s_levels[level]) # adds literals that are precondition to action
-                
-                # adding action as children of literals
+
                 for literal_node in self.s_levels[level]:
-                    if literal_node in a_node.parents:
-                        literal_node.children.add(a_node)
+                    if literal_node in a_node.prenodes:
+                        a_node.link_parent(literal_node)
 
                 self.a_levels[level].add(a_node)
-
-
-
 
 
     def add_literal_level(self, level):
@@ -385,7 +389,7 @@ class PlanningGraph():
             for effect in action.effnodes:
                 self.s_levels[level].add(effect)
 
-        # linknig previous actions as parents and state nodes as action's children
+        # linknig previous actions as state's parents and state nodes as action's children
         # iterating over nodes created above
         for s_node in self.s_levels[level]:
             # iterating over actions of previous level
@@ -395,8 +399,7 @@ class PlanningGraph():
                     # if created node is an effect of action, add action as its parent and
                     # it as action's child
                     if s_node == effect:
-                        action.children.add(s_node)
-                        s_node.parents.add(action)
+                        s_node.link_parent(action)
 
 
 
@@ -442,6 +445,7 @@ class PlanningGraph():
             return False
         return True
 
+
     def inconsistent_effects_mutex(self, node_a1: PgNode_a, node_a2: PgNode_a) -> bool:
         """
         Test a pair of actions for inconsistent effects, returning True if
@@ -467,8 +471,6 @@ class PlanningGraph():
                 return True
 
         return False
-
-
 
 
     def interference_mutex(self, node_a1: PgNode_a, node_a2: PgNode_a) -> bool:
@@ -528,15 +530,11 @@ class PlanningGraph():
         at the parents of these nodes, and check their comp
         """
 
-        for precon in node_a1.action.precond_pos:
-            if precon in node_a2.action.precond_neg:
-                return True
-
-        for precon in node_a2.action.precond_pos:
-            if precon in node_a1.action.precond_neg:
-                return True
+        for parent1 in node_a1.parents:
+            for parent2 in node_a2.parents:
+                if parent1.is_mutex(parent2):
+                    return True
         return False
-
 
 
     def update_s_mutex(self, nodeset: set):
@@ -557,6 +555,7 @@ class PlanningGraph():
             for n2 in nodelist[i + 1:]:
                 if self.negation_mutex(n1, n2) or self.inconsistent_support_mutex(n1, n2):
                     mutexify(n1, n2)
+
 
     def negation_mutex(self, node_s1: PgNode_s, node_s2: PgNode_s) -> bool:
         """
@@ -603,7 +602,6 @@ class PlanningGraph():
                 if parent_action_s1.is_mutex(parent_action_s2):
                     mutex = True
         return mutex
-
 
 
     def h_levelsum(self) -> int:
